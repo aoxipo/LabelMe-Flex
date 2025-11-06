@@ -346,19 +346,7 @@ class SamInteractiveAnnotator:
             plt.close("all")
             exit()
 
-    # ====== 更新可视化 ======
-    def _refresh_overlay(self):
-        overlay = self.image.copy()
-        for cid, data in self.seg_obj.items():
-            if not data["masks"]:
-                continue
-            combined_mask = np.any(np.stack(data["masks"]), axis=0)
-            overlay[combined_mask] = 0.5 * overlay[combined_mask] + 0.5 * data["color"]
-         
-        self.ax.imshow(overlay)
-        self.ax.set_title(f"当前类别: {self.current_class_id}")
-        self.fig.canvas.draw_idle()
-    
+
     # ====== 局部更新可视化 ======
     def _add_mask(self, mask, class_id):
         color = self.seg_obj[class_id]["color"]
@@ -424,43 +412,6 @@ class SamInteractiveAnnotator:
         self.fig.canvas.draw_idle()
 
     # ====== 保存为 LabelMe JSON ======
-    def _save_labelme_json_old(self, image_path):
-        if not self.seg_obj:
-            print("⚠️ 未标注任何物体，跳过保存。")
-            return
-
-        shapes = []
-        h, w = self.image.shape[:2]
-        for cid, data in self.seg_obj.items():
-            if not data["masks"]:
-                continue
-            combined_mask = np.any(np.stack(data["masks"]), axis=0)
-            contours, _ = cv2.findContours(
-                combined_mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-            )
-            for contour in contours:
-                pts = contour.squeeze(1).tolist()
-                shapes.append({
-                    "label": str(cid),
-                    "points": pts,
-                    "shape_type": "polygon",
-                    "flags": {}
-                })
-
-        labelme_json = {
-            "version": "5.0.1",
-            "flags": {},
-            "shapes": shapes,
-            "imagePath": os.path.basename(image_path),
-            "imageData": None,
-            "imageHeight": h,
-            "imageWidth": w
-        }
-        save_path = os.path.join(self.out_dir, os.path.splitext(os.path.basename(image_path))[0] + ".json")
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(labelme_json, f, indent=2, ensure_ascii=False)
-        print(f"✅ 已保存: {save_path}")
-
     def _save_labelme_json(self, image_path):
         if not self.seg_obj:
             print("⚠️ 未标注任何物体，跳过保存。")
