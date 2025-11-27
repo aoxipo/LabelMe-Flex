@@ -56,5 +56,11 @@ python main.py \
   --model_type vit_h
 ```
 
+# OPT
+继承模式，为了应对3D结构标准，提供上下帧之间的标注点继承，上一帧的标注点会作为下一帧的提示词嵌入到sam结果中
+```
+inherit_mode=True
+```
+
 # 贡献
 感谢 SAM 团队开源的算法 https://github.com/facebookresearch/segment-anything.git
