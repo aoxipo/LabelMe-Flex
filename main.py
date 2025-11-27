@@ -15,7 +15,7 @@ plt.rcParams['axes.unicode_minus'] = False
 
 
 class SamInteractiveAnnotator:
-    def __init__(self, image_dir, checkpoint, model_type="vit_h", device=None):
+    def __init__(self, image_dir, checkpoint, model_type="vit_h", device=None, inherit_mode=False):
         self.image_dir = image_dir
         self.out_dir = os.path.join(image_dir, "json")
         os.makedirs(self.out_dir, exist_ok=True)
@@ -40,7 +40,8 @@ class SamInteractiveAnnotator:
 
         self.overlay_image = None     # 实时展示图像
         self.global_mask = None       # 每个像素所属类别ID
-         
+        self.inherit_mode = inherit_mode    
+        print("inherit Mode: ", "✅" if self.inherit_mode else "❌")
         
 
     def print_help(self):
@@ -114,24 +115,41 @@ class SamInteractiveAnnotator:
             self.predictor.set_image(image)
             self._annotate_single_image(image, path)
 
+    def inherit_init(self):
+        self.masks_all = []
+        total_id = len(self.seg_obj)
+        for i in range(total_id):
+            
+            point_list = self.seg_obj[i]["points"]
+            self.seg_obj[i]["masks"] = []
+
+            for point in point_list: 
+
+                masks, scores, _ = self.predictor.predict(
+                    point_coords=np.array([point]),
+                    point_labels=np.array([1]),
+                    multimask_output=True
+                )
+                best_mask = masks[np.argmax(scores)]
+
+                self.masks_all.append(best_mask)
+                self._add_mask(best_mask, i)
+                self.seg_obj[i]["masks"].append(best_mask)
+                
+
     # ====== 单图像标注 ======
     def _annotate_single_image(self, image, image_path):
-        self.seg_obj.clear()
-        self.current_class_id = 0
-        self.masks_all = []  # 记录
+
         self.draw_points = []
         self.is_drawing  = False
         self.temp_mask = None
         self.brush_radius = 10  # 默认笔刷半径
-
         self.is_polygon_mode = False
         self.poly_points = []
         self.poly_line = None
 
         self.image = image
         self.fig, self.ax = plt.subplots()
-       
-
         self.ax.imshow(image)
         self.ax.set_title(f"当前类别: 0 | 左键分割, 右键撤销, N/M切换类别, O还原, ESC退出")
 
@@ -144,6 +162,15 @@ class SamInteractiveAnnotator:
         self.fig.canvas.mpl_connect("key_press_event", self.onkey)
         self.cid_move = self.fig.canvas.mpl_connect("motion_notify_event", self.onmove)
         self.cid_release = self.fig.canvas.mpl_connect("button_release_event", self.onrelease)
+
+
+        # 继承上一批提示词
+        if self.inherit_mode and self.seg_obj:
+            self.inherit_init()
+        else:
+            self.seg_obj.clear()
+            self.current_class_id = 0
+            self.masks_all = []  # 记录
 
         plt.show()
         self._save_labelme_json(image_path)
@@ -177,7 +204,7 @@ class SamInteractiveAnnotator:
                 mask = mask > 0
                 cid = self.current_class_id
                 if cid not in self.seg_obj:
-                    self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid)}
+                    self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid), "points":[]}
                 self.seg_obj[cid]["masks"].append(mask)
                 self.masks_all.append(mask)
 
@@ -206,8 +233,9 @@ class SamInteractiveAnnotator:
              
             cid = self.current_class_id
             if cid not in self.seg_obj:
-                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid)}
+                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid), "points":[]}
             self.seg_obj[cid]["masks"].append(best_mask)
+            self.seg_obj[cid]["points"].append(np.array([x, y]))
 
             self._add_mask( best_mask, cid)
         
@@ -219,7 +247,9 @@ class SamInteractiveAnnotator:
                     self.masks_all.pop()
                 print("🟠 撤销上一个分割")
                 pop_mask = self.seg_obj[cid]["masks"].pop()
-                
+                if len(self.seg_obj[cid]["points"]) != 0:
+                    self.seg_obj[cid]["points"].pop()
+
                 self._undo_last( pop_mask, self.current_class_id)
 
          # === 中键: 开始绘制区域 ===
@@ -240,7 +270,6 @@ class SamInteractiveAnnotator:
             self.last_pos = pos
             self._update_overlay_preview()
 
-
     def onrelease(self, event):
         """当鼠标松开时"""
         if self.is_drawing and event.button == 2:
@@ -248,7 +277,7 @@ class SamInteractiveAnnotator:
             cid = self.current_class_id
 
             if cid not in self.seg_obj:
-                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid)}
+                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid), "points":[]}
             mask = self.temp_mask > 0
             self.seg_obj[cid]["masks"].append(mask)
             self.masks_all.append(mask)
@@ -257,9 +286,6 @@ class SamInteractiveAnnotator:
              
             self.temp_mask = None
             
-       
-
-
     # ====== 滚轮缩放 ======
     def onscroll(self, event):
         base_scale = 1.2
@@ -304,7 +330,7 @@ class SamInteractiveAnnotator:
             cid = self.current_class_id
             print(f"🟢 切换到类别 {cid}")
             if cid not in self.seg_obj:
-                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid)}
+                self.seg_obj[cid] = {"masks": [], "color": self.id_to_color(cid), "points":[]}
             self.ax.set_title(f"当前类别: {cid}")
             self.fig.canvas.draw_idle()
 
@@ -345,8 +371,7 @@ class SamInteractiveAnnotator:
             print("🟥 检测到 ESC，退出所有窗口...")
             plt.close("all")
             exit()
-
-
+ 
     # ====== 局部更新可视化 ======
     def _add_mask(self, mask, class_id):
         color = self.seg_obj[class_id]["color"]
